@@ -1,0 +1,299 @@
+#include <Adafruit_LiquidCrystal.h>
+
+Adafruit_LiquidCrystal lcd(0);
+
+const int PING_PIN = 7;
+const int BUZZER_PIN = 8;
+const int LED_PIN = 9;
+const int BUTTON_PIN = 10;
+const int LIGHT_SENSOR_PIN = A0;
+
+const int LIGHT_THRESHOLD = 512;
+const int DISTANCE_THRESHOLD = 100;
+
+const unsigned long DANGER_TIME = 5000;
+const unsigned long BLINK_INTERVAL = 500;
+const unsigned long DEBOUNCE_DELAY = 50;
+
+enum State {
+  OPEN_SEA,
+  ANCHOR_DROPPED,
+  STORM,
+  CHARYBDIS,
+  WRECKED
+};
+
+State currentState = OPEN_SEA;
+State previousDisplayState = WRECKED;
+
+bool anchorDropped = false;
+
+bool lastButtonReading = HIGH;
+bool buttonState = HIGH;
+
+unsigned long lastDebounceTime = 0;
+unsigned long dangerStartTime = 0;
+unsigned long lastBlinkTime = 0;
+
+bool ledState = LOW;
+
+void setup() {
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  digitalWrite(LED_PIN, LOW);
+  noTone(BUZZER_PIN);
+
+  lcd.begin(16, 2);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SHIP SYSTEM");
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+
+  delay(1000);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("STATE:");
+  lcd.setCursor(0, 1);
+  lcd.print("OPEN SEA");
+}
+
+void loop() {
+  int lightValue = analogRead(LIGHT_SENSOR_PIN);
+  long distance = getDistance();
+
+  bool stormDetected = (lightValue < LIGHT_THRESHOLD);
+
+  bool charybdisDetected =
+      (distance > 0 && distance < DISTANCE_THRESHOLD);
+
+  checkButton();
+
+  updateState(stormDetected, charybdisDetected);
+
+  controlOutputs();
+
+  updateLCD();
+
+  delay(50);
+}
+
+long getDistance() {
+  pinMode(PING_PIN, OUTPUT);
+
+  digitalWrite(PING_PIN, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(PING_PIN, HIGH);
+  delayMicroseconds(5);
+
+  digitalWrite(PING_PIN, LOW);
+
+  pinMode(PING_PIN, INPUT);
+
+  unsigned long duration =
+      pulseIn(PING_PIN, HIGH, 30000);
+
+  if (duration == 0) {
+    return -1;
+  }
+
+  long distance = duration / 29 / 2;
+
+  return distance;
+}
+
+void checkButton() {
+  bool reading = digitalRead(BUTTON_PIN);
+
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
+    if (reading != buttonState) {
+      buttonState = reading;
+
+      if (buttonState == LOW &&
+          currentState != WRECKED) {
+
+        anchorDropped = !anchorDropped;
+
+        if (anchorDropped) {
+          currentState = ANCHOR_DROPPED;
+          dangerStartTime = 0;
+
+          digitalWrite(LED_PIN, LOW);
+          ledState = LOW;
+
+          noTone(BUZZER_PIN);
+        }
+        else {
+          currentState = OPEN_SEA;
+          dangerStartTime = 0;
+        }
+      }
+    }
+  }
+
+  lastButtonReading = reading;
+}
+
+void updateState(bool stormDetected,
+                 bool charybdisDetected) {
+
+  if (currentState == WRECKED) {
+    return;
+  }
+
+  if (anchorDropped) {
+    currentState = ANCHOR_DROPPED;
+    dangerStartTime = 0;
+    return;
+  }
+
+  if (currentState == OPEN_SEA) {
+
+    if (stormDetected) {
+      currentState = STORM;
+      dangerStartTime = millis();
+      return;
+    }
+
+    if (charybdisDetected) {
+      currentState = CHARYBDIS;
+      dangerStartTime = millis();
+      return;
+    }
+  }
+
+  else if (currentState == STORM) {
+
+    if (!stormDetected) {
+      currentState = OPEN_SEA;
+      dangerStartTime = 0;
+
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+
+      return;
+    }
+
+    if ((millis() - dangerStartTime) >= DANGER_TIME) {
+      currentState = WRECKED;
+
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+
+      return;
+    }
+  }
+
+  else if (currentState == CHARYBDIS) {
+
+    if (!charybdisDetected) {
+      currentState = OPEN_SEA;
+      dangerStartTime = 0;
+
+      noTone(BUZZER_PIN);
+
+      return;
+    }
+
+    if ((millis() - dangerStartTime) >= DANGER_TIME) {
+      currentState = WRECKED;
+
+      noTone(BUZZER_PIN);
+
+      return;
+    }
+  }
+}
+
+void controlOutputs() {
+
+  switch (currentState) {
+
+    case OPEN_SEA:
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+      noTone(BUZZER_PIN);
+      break;
+
+    case ANCHOR_DROPPED:
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+      noTone(BUZZER_PIN);
+      break;
+
+    case STORM:
+      noTone(BUZZER_PIN);
+
+      if ((millis() - lastBlinkTime) >= BLINK_INTERVAL) {
+        lastBlinkTime = millis();
+
+        ledState = !ledState;
+
+        digitalWrite(LED_PIN, ledState);
+      }
+
+      break;
+
+    case CHARYBDIS:
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+
+      tone(BUZZER_PIN, 1500);
+
+      break;
+
+    case WRECKED:
+      digitalWrite(LED_PIN, LOW);
+      ledState = LOW;
+      noTone(BUZZER_PIN);
+      break;
+  }
+}
+
+void updateLCD() {
+
+  if (currentState == previousDisplayState) {
+    return;
+  }
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("STATE:");
+
+  lcd.setCursor(0, 1);
+
+  switch (currentState) {
+
+    case OPEN_SEA:
+      lcd.print("OPEN SEA");
+      break;
+
+    case ANCHOR_DROPPED:
+      lcd.print("ANCHOR DROPPED");
+      break;
+
+    case STORM:
+      lcd.print("STORM");
+      break;
+
+    case CHARYBDIS:
+      lcd.print("CHARYBDIS");
+      break;
+
+    case WRECKED:
+      lcd.print("WRECKED!");
+      break;
+  }
+
+  previousDisplayState = currentState;
+}

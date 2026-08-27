@@ -1,0 +1,38 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+GRAPH_TITLE = "Odysseus's Onboard Monitor: Sea Floor Depth" 
+
+df = pd.read_csv("Depth Data.csv")
+time = df["Point"]
+raw_depth = df["Depth (m)"]
+
+depth_numeric = pd.to_numeric(raw_depth, errors='coerce')
+depth_clean = depth_numeric.interpolate(method='linear').bfill().ffill()
+
+depth_smoothed = depth_clean.rolling(window=5, center=True, min_periods=1).mean()
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.set_title(GRAPH_TITLE) 
+ax.set_xlabel("Time (seconds)")
+ax.set_ylabel("Depth (meters)")
+ax.grid(True, linestyle='--', alpha=0.6)
+
+ax.set_xlim(time.min(), time.max())
+padding = max((depth_smoothed.max() - depth_smoothed.min()) * 0.1, 10)
+ax.set_ylim(depth_smoothed.min() - padding, depth_smoothed.max() + padding)
+
+line, = ax.plot([], [], color='royalblue', linewidth=2, label="Filtered Sea Floor Depth")
+ax.legend()
+
+def update(frame):
+    line.set_data(time.iloc[:frame+1], depth_smoothed.iloc[:frame+1])
+    return line,
+
+ani = FuncAnimation(fig, update, frames=len(time), interval=50,
+                    blit=False, repeat=False)
+
+plt.tight_layout()
+plt.show(block=True)
